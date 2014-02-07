@@ -6,19 +6,16 @@
  * Copyright (c) 2011, Microsoft Corporation
  */
 
-using System;
-using System.Linq;
-using System.Runtime.Serialization;
-using System.Windows;
-using System.Collections.Generic;
 using SQLite;
-using Microsoft.Phone.Controls;
-using Microsoft.Phone.Shell;
+using System;
+using System.Collections.Generic;
 using System.Collections.ObjectModel;
+using System.Runtime.Serialization;
+using System.Text.RegularExpressions;
+using System.Threading;
 using WPCordovaClassLib.Cordova;
 using WPCordovaClassLib.Cordova.Commands;
 using WPCordovaClassLib.Cordova.JSON;
-using System.Text.RegularExpressions;
 
 namespace Cordova.Extension.Commands
 {
@@ -90,6 +87,7 @@ namespace Cordova.Extension.Commands
 
         #endregion
         private string dbName = "";
+		private readonly AutoResetEvent signal = new AutoResetEvent(false);
         private SQLiteConnection db;
         //we don't actually open here, we will do this with each db transaction
         public void open(string options)
@@ -109,17 +107,19 @@ namespace Cordova.Extension.Commands
                 return;
             }
 
+			var callbackId = JsonHelper.Deserialize<string[]>(options)[1];
             //if (!string.IsNullOrEmpty(dbOptions.DBName))
             if (!string.IsNullOrEmpty(dbName))
             {
                 //dbName = dbOptions.DBName;
                 System.Diagnostics.Debug.WriteLine("SQLitePlugin.open():" + dbName);
-                DispatchCommandResult(new PluginResult(PluginResult.Status.OK));
-                this.dbName = dbName;
+				this.dbName = dbName;
+				signal.Set();
+				DispatchCommandResult(new PluginResult(PluginResult.Status.OK), callbackId);                
             }
             else
             {
-                DispatchCommandResult(new PluginResult(PluginResult.Status.ERROR, "No database name"));
+				DispatchCommandResult(new PluginResult(PluginResult.Status.ERROR, "No database name"), callbackId);
             }
         }
         public void close(string options)
@@ -130,11 +130,23 @@ namespace Cordova.Extension.Commands
                 this.db.Close();
 
             this.db = null;
-            DispatchCommandResult(new PluginResult(PluginResult.Status.OK));
+			var callbackId = JsonHelper.Deserialize<string[]>(options)[1];
+			DispatchCommandResult(new PluginResult(PluginResult.Status.OK), callbackId);
         }
         public void executeSqlBatch(string options)
         {
             List<string> opt = JsonHelper.Deserialize<List<string>>(options);
+
+			if (string.IsNullOrWhiteSpace(this.dbName))
+			{
+				signal.WaitOne(1000);
+				if (string.IsNullOrWhiteSpace(this.dbName))
+				{
+					DispatchCommandResult(new PluginResult(PluginResult.Status.ERROR, "Database is not open!"), opt[1]);
+					return;
+				}
+			}
+
             TransactionsCollection transactions;
             SQLiteTransactionResult transResult = new SQLiteTransactionResult();
             try
@@ -183,10 +195,10 @@ namespace Cordova.Extension.Commands
             catch (Exception e)
             {
                 System.Diagnostics.Debug.WriteLine("Error: " + e);
-                DispatchCommandResult(new PluginResult(PluginResult.Status.JSON_EXCEPTION));
+				DispatchCommandResult(new PluginResult(PluginResult.Status.JSON_EXCEPTION), opt[1]);
                 return;
             }
-            DispatchCommandResult(new PluginResult(PluginResult.Status.OK, JsonHelper.Serialize(transResult)));
+			DispatchCommandResult(new PluginResult(PluginResult.Status.OK, JsonHelper.Serialize(transResult)), opt[1]);
         }
     }
 }
